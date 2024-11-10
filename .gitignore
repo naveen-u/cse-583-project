@@ -96,3 +96,7 @@ _deps
 *.bc
 *.pdf
 *.dot
+
+build/
+dot/
+.vscode/
