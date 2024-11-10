@@ -8,7 +8,11 @@ int* bar() {
     fprintf(stdout, "%ld\n", (long)&b);
     fprintf(stdout, "%ld\n", (long)&a - (long)&b);
     int c = a + b;
+
+    #pragma clang diagnostic push
+    #pragma clang diagnostic ignored "-Wreturn-stack-address"
     return &c;
+    #pragma clang diagnostic pop
 }
 
 int main() {
