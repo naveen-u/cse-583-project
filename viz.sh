@@ -28,7 +28,7 @@ else
   DOT_FILES="*.dot"
 fi
 
-cat $DOT_FILES | dot -Tpdf > $OUTPUT_DIR/$BENCH.$VIZ_TYPE.pdf
+cat $DOT_FILES | gvpack -u | dot -Tpdf > $OUTPUT_DIR/$BENCH.$VIZ_TYPE.pdf
 echo "Created $BENCH.$VIZ_TYPE.pdf"
 
 rm -rf $TMP_DIR

@@ -27,9 +27,15 @@ namespace llvm {
 
 struct CanaryPass : public PassInfoMixin<CanaryPass> {
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &FAM) {
+    if (F.getName().str() == "main") {
+      return PreservedAnalyses::all();
+    }
+
+    BasicBlock &BB = F.front();
     int numAllocas = 0;
     Instruction *secondAlloca = nullptr;
-    for (auto &I : F.front()) { // Iterate all instructions in the first BB
+
+    for (auto &I : BB) {
       if (I.getOpcode() == Instruction::Alloca) {
         if (numAllocas++ > 0) {
           secondAlloca = &I;
@@ -41,59 +47,44 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
       return PreservedAnalyses::all();
     }
 
-    errs() << "Modifying the CFG\n";
+    errs() << "Updating CFG for " << F.getName().str() << "\n";
 
     LLVMContext &ctx = F.getContext();
     Module *M = F.getParent();
 
-    Type *i32 = IntegerType::getInt32Ty(ctx);
     Type *i16 = IntegerType::getInt16Ty(ctx);
+    Type *i32 = IntegerType::getInt32Ty(ctx);
+    Type *i64 = IntegerType::getInt64Ty(ctx);
 
-    Type *ReturnTys[] = {i16, i32};
-    StructType *RetTy = StructType::get(ctx, ReturnTys);
+    BasicBlock *merge_block = BB.splitBasicBlock(secondAlloca);
+    BasicBlock *canary_block =
+        BasicBlock::Create(ctx, "canary", &F, merge_block);
 
-    // Declare the rdrand16 intrinsic
-    // FunctionType *RDRandTy = FunctionType::get(RetTy, false);
-    // Function *RDRand = Function::Create(RDRandTy, Function::ExternalLinkage,
-    //                                     "llvm.x86.rdrand.16", M);
-    Function *RDRand =
-        Intrinsic::getDeclaration(F.getParent(), Intrinsic::x86_rdrand_16);
+    // Remove the existing block terminator (unconditional branch) so that we
+    // can add our own branch
+    BB.getTerminator()->eraseFromParent();
 
-    IRBuilder<> canaryBuilder(secondAlloca);
+    // Get a random number and branch to canary block if odd
+    IRBuilder<> builder(&BB);
 
-    // Allocate space for the 64-bit random value
-    // AllocaInst *ResultPtr = canaryBuilder.CreateAlloca(i16);
+    FunctionType *randType = FunctionType::get(i32, false);
+    FunctionCallee randFunc =
+        F.getParent()->getOrInsertFunction("get_rand32", randType);
+    Value *RandomVal = builder.CreateCall(randFunc);
+    Value *One = ConstantInt::get(i32, 1);
+    Value *RandomBit = builder.CreateAnd(RandomVal, One);
 
-    // Call RDRAND
-    // Value *Status = canaryBuilder.CreateCall(RDRand, ResultPtr);
-    // Value *Result =
-    //     canaryBuilder.CreateIntrinsic(Intrinsic::x86_rdrand_16, {RetTy}, {});
+    Value *cmp = builder.CreateICmpEQ(RandomBit, One, "one_check");
+    builder.CreateCondBr(cmp, canary_block, merge_block);
 
-    // F.getParent()->addModuleFlag(Module::ModFlagBehavior::Warning,
-    //                              "target-features", "+rdrnd");
-    Value *Result = canaryBuilder.CreateCall(RDRand, {});
+    // Insert canary in the canary block
+    builder.SetInsertPoint(canary_block);
+    AllocaInst *canary = builder.CreateAlloca(i32, nullptr, "Foo");
+    StoreInst *store = builder.CreateStore(One, canary);
 
-    // Value *Result = canaryBuilder.CreateCall(RDRand);
-    errs() << "Result is: " << *Result << "\n";
-    Value *RandomVal = canaryBuilder.CreateExtractValue(Result, 0);
-    errs() << "Extracted value " << *RandomVal << "\n";
-    // Load the random value
-    // Value *RandomVal = canaryBuilder.CreateLoad(i16, ResultPtr);
+    // Add a terminator for the canary block
+    builder.CreateBr(merge_block);
 
-    // Extract least significant bit using AND
-    Value *One = ConstantInt::get(i16, 1);
-    Value *RandomBit = canaryBuilder.CreateAnd(RandomVal, One);
-
-    errs() << "Random value pointer is " << *RandomBit << "\n";
-
-    // AllocaInst *canarySizeVar =
-    //     canaryBuilder.CreateAlloca(i32, 0, 0, "canaryAlloc");
-    // StoreInst *canarySizeStore = canaryBuilder.CreateStore(
-    //     ConstantInt::get(i32, APInt(32, 1)), canarySizeVar);
-    // LoadInst *canarySize =
-    //     canaryBuilder.CreateLoad(i32, canarySizeVar, "canarySizeLoad");
-    AllocaInst *canary =
-        canaryBuilder.CreateAlloca(i32, 0, RandomBit, "canary");
     return PreservedAnalyses::none();
   }
 };

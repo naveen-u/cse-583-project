@@ -5,6 +5,7 @@ NAME_MYPASS=canarypass
 PATH_MYPASS=$(pwd)/build/pass/CanaryPass.so
 BENCH=$1
 EXECUTABLES=$(pwd)/build/executables
+LIB=$(pwd)/build/pass/rand.o
 
 pushd ./build
 cmake ..
@@ -25,9 +26,11 @@ clang ${PATH_TO_BENCHMARK}/$BENCH.bc -o ${EXECUTABLES}/${BENCH}.original.o
 
 # clang -c $(pwd)/shadowClone/randGen.c -o ${LIB}
 
+clang -mrdrnd -c $(pwd)/pass/rand.c -o ${LIB}
+
 # # Generete Binary for the optimized bytecode
 echo "Generating binary for the optimized bytecode"
-clang -Xclang -target-feature -Xclang +rdrnd -target $(gcc -dumpmachine) -mrdrnd ${PATH_TO_BENCHMARK}/${BENCH}.fs.bc -o ${EXECUTABLES}/${BENCH}.fs.o
+clang -g -mrdrnd ${PATH_TO_BENCHMARK}/${BENCH}.fs.bc ${LIB} -o ${EXECUTABLES}/${BENCH}.fs.o
 
 
 # cc -c Shadowclone/randGen.c -o ${LIB}
