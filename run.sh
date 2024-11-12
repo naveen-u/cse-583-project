@@ -1,13 +1,15 @@
 #!/bin/bash
 
-PATH_TO_BENCHMARK=./benchmarks
 NAME_MYPASS=canarypass
-PATH_MYPASS=$(pwd)/build/pass/CanaryPass.so
+PATH_TO_BENCHMARK=./benchmarks
+BUILD=$(pwd)/build
+PATH_MYPASS=${BUILD}/pass/CanaryPass.so
 BENCH=$1
-EXECUTABLES=$(pwd)/build/executables
-LIB=$(pwd)/build/pass/rand.o
+EXECUTABLES=${BUILD}/executables
+LIB=${BUILD}/pass/rand.o
 
-pushd ./build
+mkdir -p ${EXECUTABLES}
+pushd ${BUILD}
 cmake ..
 make -j8
 popd
