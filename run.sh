@@ -26,7 +26,7 @@ opt -load-pass-plugin="${PATH_MYPASS}" -passes="${NAME_MYPASS}" ${PATH_TO_BENCHM
 echo "Generating binary for the original bytecode"
 clang ${PATH_TO_BENCHMARK}/$BENCH.bc -o ${EXECUTABLES}/${BENCH}.original.out
 
-if [[ "$(uname -m)" ==  "x86_64" ]]; then
+if [[ $(uname -m) ==  x86* ]]; then
     echo "Using RDRAND for randomness"
     clang -D __rdrand__ -mrdrnd -c $(pwd)/pass/rand.c -o ${LIB}
 
