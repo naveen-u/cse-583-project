@@ -1,1 +1,0 @@
-- shadowclone's canary values are random numbers (for each clone) are generated at compile time
