@@ -53,6 +53,7 @@ uint32_t get_rand32() {
     if (RAND_bytes((unsigned char*)&random_number, sizeof(random_number)) != 1) {
         return 0;
     }
+    binprintf(random_number);
     return random_number;
 }
 
