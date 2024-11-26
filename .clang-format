@@ -1,0 +1,10 @@
+Language: Cpp
+BreakBeforeInheritanceComma: false
+BreakStringLiterals: false
+CommentPragmas: '^ -'
+FixNamespaceComments: false
+MaxEmptyLinesToKeep: 1
+SpacesInLineCommentPrefix:
+  Minimum: 1
+  Maximum: 1
+ReflowComments: false
