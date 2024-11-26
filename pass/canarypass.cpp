@@ -28,6 +28,9 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
     uint64_t totalSize = 0;
     unsigned maxAlign = 1;
 
+    // Maximum possible padding per variable
+    const uint64_t maxPadding = 15;
+
     // Calculate total size and maximum alignment
     for (AllocaInst *allocaInst : allocas) {
       Type *allocaType = allocaInst->getAllocatedType();
@@ -35,8 +38,12 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
 
       // Align the offset
       totalSize = (totalSize + alignment - 1) & ~(alignment - 1);
+
       totalSize += dataLayout.getTypeAllocSize(allocaType);
-      totalSize += dataLayout.getTypeAllocSize(Type::getInt8Ty(F.getContext()));
+
+      // Add maximum padding
+      totalSize += maxPadding;
+
       maxAlign = std::max(maxAlign, alignment);
     }
 
@@ -60,11 +67,14 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
                             AllocaInst *consolidatedAlloca, Value *offset) {
     IRBuilder<> Builder(oldAlloca);
 
+    // Ensure 'offset' is of type i64
+    Value *offset64 = Builder.CreateIntCast(
+        offset, Type::getInt64Ty(oldAlloca->getContext()), false);
+
     // Create GEP instruction
     Value *zero =
         ConstantInt::get(Type::getInt64Ty(oldAlloca->getContext()), 0);
-
-    SmallVector<Value *> indices = {zero, offset};
+    SmallVector<Value *> indices = {zero, offset64};
     Value *gep = Builder.CreateGEP(consolidatedAlloca->getAllocatedType(),
                                    consolidatedAlloca, indices, "gep");
 
@@ -88,6 +98,7 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
     BasicBlock &BB = F.getEntryBlock();
     LLVMContext &ctx = F.getContext();
     Type *i32 = IntegerType::getInt32Ty(ctx);
+    Type *i64 = IntegerType::getInt64Ty(ctx);
     const DataLayout &dataLayout = F.getParent()->getDataLayout();
 
     SmallVector<AllocaInst *> allocas = getAllocas(BB);
@@ -103,39 +114,47 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
     AllocaInst *consolidatedAlloca = createConsolidatedAlloca(F, allocas);
 
     // Get a random number
-    IRBuilder<> builder(allocas[0]);
-
     FunctionType *randType = FunctionType::get(i32, false);
     FunctionCallee randFunc =
         F.getParent()->getOrInsertFunction("get_rand32", randType);
-    Value *randomVal = builder.CreateCall(randFunc);
 
-    Value *one = ConstantInt::get(i32, 1);
-    Value *remainingRandBits = randomVal;
-    Value *currentOffset = ConstantInt::get(i32, 0);
+    Value *currentOffset = ConstantInt::get(i64, 0);
 
     // Replace allocas with GetElementPtrs
     for (AllocaInst *allocaInst : allocas) {
-      builder.SetInsertPoint(allocaInst);
-      Value *randomBit = builder.CreateAnd(remainingRandBits, one, "randomBit");
-      Value *alignment = ConstantInt::get(i32, allocaInst->getAlign().value());
-      Value *alignMask = builder.CreateSub(alignment, one, "alignMask");
+      IRBuilder<> builder(allocaInst);
 
-      // We do currentOffset = (currentOffset + alignment - 1) & ~(alignment - 1)
-      // to ensure the variable is aligned correctly
+      Value *alignment =
+          ConstantInt::get(i64, allocaInst->getAlign().value());
+      Value *one64 = ConstantInt::get(i64, 1);
+      Value *alignMask =
+          builder.CreateSub(alignment, one64, "alignMask");
+
+      // currentOffset = (currentOffset + alignment -1) & ~(alignment -1)
+      currentOffset = builder.CreateAnd(
+          builder.CreateAdd(currentOffset, alignMask),
+          builder.CreateNot(alignMask), "alignedOffset");
+
+      // Generate random padding between 0 and n
+      Value *randVal = builder.CreateCall(randFunc);
+      Value *randPadding =
+          builder.CreateURem(randVal, ConstantInt::get(i32, 16), "randPadding");
+      Value *randPadding64 =
+          builder.CreateIntCast(randPadding, i64, false);
+
+      // Add random padding to currentOffset
       currentOffset =
-          builder.CreateAnd(builder.CreateAdd(currentOffset, alignMask),
-                            builder.CreateNot(alignMask), "alignedOffset");
+          builder.CreateAdd(currentOffset, randPadding64, "offsetWithPadding");
 
+      // Replace alloca with GEP at currentOffset
       replaceAllocaWithGEP(allocaInst, consolidatedAlloca, currentOffset);
 
+      // Update currentOffset
       Type *allocaType = allocaInst->getAllocatedType();
-      currentOffset = builder.CreateAdd(
-          currentOffset,
-          ConstantInt::get(i32, dataLayout.getTypeAllocSize(allocaType)));
-
-      currentOffset = builder.CreateAdd(currentOffset, randomBit);
-      remainingRandBits = builder.CreateLShr(remainingRandBits, one);
+      uint64_t typeSize = dataLayout.getTypeAllocSize(allocaType);
+      Value *typeSizeVal = ConstantInt::get(i64, typeSize);
+      currentOffset =
+          builder.CreateAdd(currentOffset, typeSizeVal, "nextOffset");
     }
 
     // Clean up old allocas
