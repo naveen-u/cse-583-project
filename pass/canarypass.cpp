@@ -42,7 +42,7 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
       totalSize += dataLayout.getTypeAllocSize(allocaType);
 
       // Add maximum padding
-      totalSize += maxPadding;
+      totalSize += maxPadding*alignment;
 
       maxAlign = std::max(maxAlign, alignment);
     }
@@ -55,7 +55,6 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
     AllocaInst *newAlloca =
         Builder.CreateAlloca(i8ArrayTy, nullptr, "consolidated");
     newAlloca->setAlignment(Align(maxAlign));
-
     return newAlloca;
   }
 
@@ -142,9 +141,12 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
       Value *randPadding64 =
           builder.CreateIntCast(randPadding, i64, false);
 
+      Value *randPaddingAligned =
+          builder.CreateMul(randPadding64, alignment, "randPaddingAligned");
+
       // Add random padding to currentOffset
-      currentOffset =
-          builder.CreateAdd(currentOffset, randPadding64, "offsetWithPadding");
+      currentOffset = builder.CreateAdd(
+          currentOffset, randPaddingAligned, "offsetWithPadding");
 
       // Replace alloca with GEP at currentOffset
       replaceAllocaWithGEP(allocaInst, consolidatedAlloca, currentOffset);
