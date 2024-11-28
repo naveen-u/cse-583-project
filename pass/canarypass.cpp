@@ -38,9 +38,6 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
     uint64_t totalSize = 0;
     unsigned maxAlign = 1;
 
-    // Maximum possible padding per variable
-    const uint64_t maxPadding = 15;
-
     // Calculate total size and maximum alignment
     for (AllocaInst *allocaInst : allocas) {
       Type *allocaType = allocaInst->getAllocatedType();
