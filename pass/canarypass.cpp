@@ -38,6 +38,9 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
     uint64_t totalSize = 0;
     unsigned maxAlign = 1;
 
+    // Maximum possible padding per variable
+    const uint64_t maxPadding = 15;
+
     // Calculate total size and maximum alignment
     for (AllocaInst *allocaInst : allocas) {
       Type *allocaType = allocaInst->getAllocatedType();
@@ -121,13 +124,7 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
     // Create a consolidated alloca instruction
     AllocaInst *consolidatedAlloca = createConsolidatedAlloca(F, allocas);
 
-    // Get a random number
     IRBuilder<> builder(allocas[0]);
-    // FunctionType *randType = FunctionType::get(i32, false);
-    // FunctionCallee randFunc =
-    //     F.getParent()->getOrInsertFunction("get_rand32", randType);
-    // Value *randVal = builder.CreateCall(randFunc);
-
     Value *currentOffset = ConstantInt::get(i64, 0);
     Value *randBits = nullptr;
     Type *randBitsType;
@@ -200,6 +197,7 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
       Value *typeSizeVal = ConstantInt::get(i64, typeSize);
       currentOffset =
           builder.CreateAdd(currentOffset, typeSizeVal, "nextOffset");
+
       allocasRemaining--;
     }
 
