@@ -1,3 +1,5 @@
+#include <map>
+
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
 
@@ -6,6 +8,14 @@ using namespace llvm;
 namespace llvm {
 
 struct CanaryPass : public PassInfoMixin<CanaryPass> {
+  // No. of random bits required to decide padding
+  const uint64_t paddingBits = 4;
+  // Maximum possible padding blocks per variable (where each block is alignment sized)
+  const uint64_t maxPadding = (1 << paddingBits) - 1;
+
+  /* -------------------------------------------------------------------------- */
+  /*                          Find alloca instructions                          */
+  /* -------------------------------------------------------------------------- */
 
   SmallVector<AllocaInst *> getAllocas(BasicBlock &BB) {
     SmallVector<AllocaInst *> allocas;
@@ -28,9 +38,6 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
     uint64_t totalSize = 0;
     unsigned maxAlign = 1;
 
-    // Maximum possible padding per variable
-    const uint64_t maxPadding = 15;
-
     // Calculate total size and maximum alignment
     for (AllocaInst *allocaInst : allocas) {
       Type *allocaType = allocaInst->getAllocatedType();
@@ -42,7 +49,7 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
       totalSize += dataLayout.getTypeAllocSize(allocaType);
 
       // Add maximum padding
-      totalSize += maxPadding*alignment;
+      totalSize += maxPadding * alignment;
 
       maxAlign = std::max(maxAlign, alignment);
     }
@@ -96,14 +103,16 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
 
     BasicBlock &BB = F.getEntryBlock();
     LLVMContext &ctx = F.getContext();
+    Type *i16 = IntegerType::getInt16Ty(ctx);
     Type *i32 = IntegerType::getInt32Ty(ctx);
     Type *i64 = IntegerType::getInt64Ty(ctx);
     const DataLayout &dataLayout = F.getParent()->getDataLayout();
 
     SmallVector<AllocaInst *> allocas = getAllocas(BB);
 
-    if (allocas.empty()) {
-      errs() << "No stack allocations found for " << F.getName().str() << "\n";
+    if (allocas.size() < 2) {
+      errs() << allocas.size() << " stack allocations found for "
+             << F.getName().str() << "\n";
       return PreservedAnalyses::all();
     }
 
@@ -113,40 +122,74 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
     AllocaInst *consolidatedAlloca = createConsolidatedAlloca(F, allocas);
 
     // Get a random number
-    FunctionType *randType = FunctionType::get(i32, false);
-    FunctionCallee randFunc =
-        F.getParent()->getOrInsertFunction("get_rand32", randType);
+    IRBuilder<> builder(allocas[0]);
+    // FunctionType *randType = FunctionType::get(i32, false);
+    // FunctionCallee randFunc =
+    //     F.getParent()->getOrInsertFunction("get_rand32", randType);
+    // Value *randVal = builder.CreateCall(randFunc);
 
     Value *currentOffset = ConstantInt::get(i64, 0);
+    Value *randBits = nullptr;
+    Type *randBitsType;
+
+    bool firstAlloca = true;
+    int randBitsAvailable = 0;
+    int allocasRemaining = allocas.size();
 
     // Replace allocas with GetElementPtrs
     for (AllocaInst *allocaInst : allocas) {
-      IRBuilder<> builder(allocaInst);
+      builder.SetInsertPoint(allocaInst);
 
-      Value *alignment =
-          ConstantInt::get(i64, allocaInst->getAlign().value());
+      Value *alignment = ConstantInt::get(i64, allocaInst->getAlign().value());
       Value *one64 = ConstantInt::get(i64, 1);
-      Value *alignMask =
-          builder.CreateSub(alignment, one64, "alignMask");
+      Value *alignMask = builder.CreateSub(alignment, one64, "alignMask");
 
       // currentOffset = (currentOffset + alignment -1) & ~(alignment -1)
-      currentOffset = builder.CreateAnd(
-          builder.CreateAdd(currentOffset, alignMask),
-          builder.CreateNot(alignMask), "alignedOffset");
+      currentOffset =
+          builder.CreateAnd(builder.CreateAdd(currentOffset, alignMask),
+                            builder.CreateNot(alignMask), "alignedOffset");
 
-      // Generate random padding between 0 and n
-      Value *randVal = builder.CreateCall(randFunc);
-      Value *randPadding =
-          builder.CreateURem(randVal, ConstantInt::get(i32, 16), "randPadding");
-      Value *randPadding64 =
-          builder.CreateIntCast(randPadding, i64, false);
+      if (firstAlloca) {
+        firstAlloca = false;
+      } else {
+        // Generate a random number if we don't have enough random bits available
+        if (randBitsAvailable < paddingBits) {
+          std::string randFunctionName;
+          std::map<int, Type *> options = {{16, i16}, {32, i32}, {64, i64}};
 
-      Value *randPaddingAligned =
-          builder.CreateMul(randPadding64, alignment, "randPaddingAligned");
+          for (const auto &pair : options) {
+            int bits = pair.first;
+            Type *type = pair.second;
+            if ((allocasRemaining < bits / paddingBits) || (bits == 64)) {
+              randFunctionName = "get_rand" + std::to_string(bits);
+              randBitsAvailable = bits;
+              randBitsType = type;
+              errs() << "Created rand call for " << bits << " bits\n";
+              break;
+            }
+          }
 
-      // Add random padding to currentOffset
-      currentOffset = builder.CreateAdd(
-          currentOffset, randPaddingAligned, "offsetWithPadding");
+          FunctionType *randType = FunctionType::get(randBitsType, false);
+          FunctionCallee randFunc =
+              F.getParent()->getOrInsertFunction(randFunctionName, randType);
+          Value *randVal = builder.CreateCall(randFunc);
+          randBits = randVal;
+        }
+
+        // Compute random padding
+        Value *randPadding = builder.CreateAnd(
+            randBits, ConstantInt::get(randBitsType, maxPadding),
+            "randPadding");
+        randBits = builder.CreateLShr(randBits, paddingBits, "randBits");
+        Value *randPadding64 = builder.CreateIntCast(randPadding, i64, false);
+        randBitsAvailable -= paddingBits;
+        Value *randPaddingAligned =
+            builder.CreateMul(randPadding64, alignment, "randPaddingAligned");
+
+        // Add random padding to currentOffset
+        currentOffset = builder.CreateAdd(currentOffset, randPaddingAligned,
+                                          "offsetWithPadding");
+      }
 
       // Replace alloca with GEP at currentOffset
       replaceAllocaWithGEP(allocaInst, consolidatedAlloca, currentOffset);
@@ -157,6 +200,7 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
       Value *typeSizeVal = ConstantInt::get(i64, typeSize);
       currentOffset =
           builder.CreateAdd(currentOffset, typeSizeVal, "nextOffset");
+      allocasRemaining--;
     }
 
     // Clean up old allocas
