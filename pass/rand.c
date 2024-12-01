@@ -62,36 +62,4 @@ unsigned long long get_rand64() {
   binprintf64(rand);
   return rand;
 }
-
-#else
-
-#include <openssl/rand.h>
-
-uint16_t get_rand16() {
-  uint16_t random_number;
-  if (RAND_bytes((unsigned char *)&random_number, sizeof(random_number)) != 1) {
-    return 0;
-  }
-  binprintf16(random_number);
-  return random_number;
-}
-
-uint32_t get_rand32() {
-  uint32_t random_number;
-  if (RAND_bytes((unsigned char *)&random_number, sizeof(random_number)) != 1) {
-    return 0;
-  }
-  binprintf32(random_number);
-  return random_number;
-}
-
-unsigned long long get_rand64() {
-  unsigned long long random_number;
-  if (RAND_bytes((unsigned char *)&random_number, sizeof(random_number)) != 1) {
-    return 0;
-  }
-  binprintf64(random_number);
-  return random_number;
-}
-
 #endif
