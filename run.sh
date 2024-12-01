@@ -1,6 +1,6 @@
 #!/bin/bash
 
-NAME_MYPASS=canarypass
+NAME_MYPASS=CanaryPass
 PATH_TO_BENCHMARK=./benchmarks
 BUILD=$(pwd)/build
 PATH_MYPASS=${BUILD}/pass/CanaryPass.so
