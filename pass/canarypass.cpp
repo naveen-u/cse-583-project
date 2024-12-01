@@ -209,17 +209,27 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
 
 } // namespace llvm
 
-extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
-llvmGetPassPluginInfo() {
-  return {LLVM_PLUGIN_API_VERSION, "CanaryPass", "v0.1", [](PassBuilder &PB) {
-            PB.registerPipelineParsingCallback(
-                [](StringRef Name, FunctionPassManager &FPM,
-                   ArrayRef<PassBuilder::PipelineElement>) {
-                  if (Name == "canarypass") {
-                    FPM.addPass(CanaryPass());
-                    return true;
-                  }
-                  return false;
-                });
-          }};
+PassPluginLibraryInfo getPassPluginInfo() {
+  const auto callback = [](PassBuilder &PB) {
+    PB.registerPipelineEarlySimplificationEPCallback(
+        [&](ModulePassManager &MPM, auto) {
+          MPM.addPass(createModuleToFunctionPassAdaptor(CanaryPass()));
+          return true;
+        });
+    PB.registerPipelineParsingCallback(
+        [](StringRef Name, FunctionPassManager &FPM,
+           ArrayRef<PassBuilder::PipelineElement>) {
+          if (Name == "canarypass") {
+            FPM.addPass(CanaryPass());
+            return true;
+          }
+          return false;
+        });
+  };
+
+  return {LLVM_PLUGIN_API_VERSION, "CanaryPass", "v0.1", callback};
+};
+
+extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo llvmGetPassPluginInfo() {
+  return getPassPluginInfo();
 }
