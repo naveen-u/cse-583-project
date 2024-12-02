@@ -140,7 +140,7 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
     int allocasRemaining = allocas.size();
 
     // Define the canary value (same for all positions)
-    uint8_t canaryValue = 0xAB; // Example canary value
+    uint8_t canaryValue = rand(); // Example canary value
     Value *canaryConst = ConstantInt::get(i8, canaryValue);
 
     // Keep track of canary pointers and values for verification
@@ -230,15 +230,15 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
     }
 
     // Insert final canary at the end
-    // builder.SetInsertPoint(&BB.back());
-    // Value *finalCanaryOffset = currentOffset;
-    // Value *zero = ConstantInt::get(i64, 0);
-    // SmallVector<Value *> finalCanaryIndices = {zero, finalCanaryOffset};
-    // Value *finalCanaryPtr = builder.CreateGEP(
-    //     consolidatedAlloca->getAllocatedType(), consolidatedAlloca,
-    //     finalCanaryIndices, "finalCanaryPtr");
-    // builder.CreateStore(canaryConst, finalCanaryPtr);
-    // canaryPtrs.push_back(finalCanaryPtr);
+    builder.SetInsertPoint(&BB.back());
+    Value *finalCanaryOffset = currentOffset;
+    Value *zero = ConstantInt::get(i64, 0);
+    SmallVector<Value *> finalCanaryIndices = {zero, finalCanaryOffset};
+    Value *finalCanaryPtr = builder.CreateGEP(
+        consolidatedAlloca->getAllocatedType(), consolidatedAlloca,
+        finalCanaryIndices, "finalCanaryPtr");
+    builder.CreateStore(canaryConst, finalCanaryPtr);
+    canaryPtrs.push_back(finalCanaryPtr);
 
     // Clean up old allocas
     for (AllocaInst *allocaInst : allocas) {
