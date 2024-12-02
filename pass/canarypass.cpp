@@ -1,4 +1,5 @@
 #include <map>
+#include <vector>
 
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
@@ -46,6 +47,9 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
       // Align the offset
       totalSize = (totalSize + alignment - 1) & ~(alignment - 1);
 
+      // Add space for the canary (1 byte)
+      totalSize += 1;
+
       totalSize += dataLayout.getTypeAllocSize(allocaType);
 
       // Add maximum padding
@@ -53,6 +57,9 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
 
       maxAlign = std::max(maxAlign, alignment);
     }
+
+    // Add space for the final canary
+    totalSize += 1;
 
     // Create new alloca instruction
     IRBuilder<> Builder(&F.getEntryBlock().front());
@@ -103,6 +110,8 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
 
     BasicBlock &BB = F.getEntryBlock();
     LLVMContext &ctx = F.getContext();
+    Type *i1 = Type::getInt1Ty(ctx);
+    Type *i8 = Type::getInt8Ty(ctx);
     Type *i16 = IntegerType::getInt16Ty(ctx);
     Type *i32 = IntegerType::getInt32Ty(ctx);
     Type *i64 = IntegerType::getInt64Ty(ctx);
@@ -130,6 +139,13 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
     int randBitsAvailable = 0;
     int allocasRemaining = allocas.size();
 
+    // Define the canary value (same for all positions)
+    uint8_t canaryValue = 0xAB; // Example canary value
+    Value *canaryConst = ConstantInt::get(i8, canaryValue);
+
+    // Keep track of canary pointers and values for verification
+    std::vector<Value *> canaryPtrs;
+
     // Replace allocas with GetElementPtrs
     for (AllocaInst *allocaInst : allocas) {
       builder.SetInsertPoint(allocaInst);
@@ -142,6 +158,22 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
       currentOffset =
           builder.CreateAnd(builder.CreateAdd(currentOffset, alignMask),
                             builder.CreateNot(alignMask), "alignedOffset");
+
+      // Insert canary before the variable
+      Value *canaryOffset = currentOffset;
+      Value *zero = ConstantInt::get(i64, 0);
+      SmallVector<Value *> canaryIndices = {zero, canaryOffset};
+      Value *canaryPtr = builder.CreateGEP(
+          consolidatedAlloca->getAllocatedType(), consolidatedAlloca,
+          canaryIndices, "canaryPtr");
+      builder.CreateStore(canaryConst, canaryPtr);
+
+      // Save the canary pointer for later verification
+      canaryPtrs.push_back(canaryPtr);
+
+      // Move currentOffset past the canary (1 byte)
+      currentOffset = builder.CreateAdd(currentOffset, ConstantInt::get(i64, 1),
+                                        "offsetAfterCanary");
 
       if (firstAlloca) {
         firstAlloca = false;
@@ -198,9 +230,73 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
       allocasRemaining--;
     }
 
+    // Insert final canary at the end
+    builder.SetInsertPoint(&BB.back());
+    Value *finalCanaryOffset = currentOffset;
+    Value *zero = ConstantInt::get(i64, 0);
+    SmallVector<Value *> finalCanaryIndices = {zero, finalCanaryOffset};
+    Value *finalCanaryPtr = builder.CreateGEP(
+        consolidatedAlloca->getAllocatedType(), consolidatedAlloca,
+        finalCanaryIndices, "finalCanaryPtr");
+    builder.CreateStore(canaryConst, finalCanaryPtr);
+    canaryPtrs.push_back(finalCanaryPtr);
+
     // Clean up old allocas
     for (AllocaInst *allocaInst : allocas) {
       allocaInst->eraseFromParent();
+    }
+
+    // Collect all return instructions
+    std::vector<ReturnInst *> returns;
+    for (auto &BB : F) {
+      if (ReturnInst *RI = dyn_cast<ReturnInst>(BB.getTerminator())) {
+        returns.push_back(RI);
+      }
+    }
+
+    // Create the error block once per function
+    BasicBlock *ErrorBB = BasicBlock::Create(ctx, "canary_error", &F);
+    IRBuilder<> ErrorBuilder(ErrorBB);
+    FunctionType *voidFnTy = FunctionType::get(Type::getVoidTy(ctx), false);
+    FunctionCallee trapFunc =
+        F.getParent()->getOrInsertFunction("llvm.trap", voidFnTy);
+    ErrorBuilder.CreateCall(trapFunc);
+    ErrorBuilder.CreateUnreachable();
+
+    // Process all return instructions
+    for (ReturnInst *RI : returns) {
+      // Get the return value before erasing RI
+      Value *retValue =
+          RI->getNumOperands() > 0 ? RI->getOperand(0) : nullptr;
+
+      IRBuilder<> RetBuilder(RI);
+
+      // For each canary, load and compare
+      Value *allCanariesOK = ConstantInt::getTrue(ctx);
+
+      for (Value *canaryPtr : canaryPtrs) {
+        Value *loadedCanary =
+            RetBuilder.CreateLoad(i8, canaryPtr, "loadedCanary");
+        Value *canaryCheck =
+            RetBuilder.CreateICmpEQ(loadedCanary, canaryConst, "canaryCheck");
+
+        // Combine with logical AND
+        allCanariesOK =
+            RetBuilder.CreateAnd(allCanariesOK, canaryCheck, "allCanariesOK");
+      }
+
+      // Create a new basic block for the return
+      BasicBlock *NewRetBB = BasicBlock::Create(ctx, "return", &F);
+      IRBuilder<> NewRetBuilder(NewRetBB);
+      if (retValue) {
+        NewRetBuilder.CreateRet(retValue);
+      } else {
+        NewRetBuilder.CreateRetVoid();
+      }
+
+      // Replace the original return instruction with a conditional branch
+      RetBuilder.CreateCondBr(allCanariesOK, NewRetBB, ErrorBB);
+      RI->eraseFromParent();
     }
 
     return PreservedAnalyses::none();
