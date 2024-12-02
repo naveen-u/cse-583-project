@@ -158,23 +158,6 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
       currentOffset =
           builder.CreateAnd(builder.CreateAdd(currentOffset, alignMask),
                             builder.CreateNot(alignMask), "alignedOffset");
-
-      // Insert canary before the variable
-      Value *canaryOffset = currentOffset;
-      Value *zero = ConstantInt::get(i64, 0);
-      SmallVector<Value *> canaryIndices = {zero, canaryOffset};
-      Value *canaryPtr = builder.CreateGEP(
-          consolidatedAlloca->getAllocatedType(), consolidatedAlloca,
-          canaryIndices, "canaryPtr");
-      builder.CreateStore(canaryConst, canaryPtr);
-
-      // Save the canary pointer for later verification
-      canaryPtrs.push_back(canaryPtr);
-
-      // Move currentOffset past the canary (1 byte)
-      currentOffset = builder.CreateAdd(currentOffset, ConstantInt::get(i64, 1),
-                                        "offsetAfterCanary");
-
       if (firstAlloca) {
         firstAlloca = false;
       } else {
@@ -228,18 +211,34 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
           builder.CreateAdd(currentOffset, typeSizeVal, "nextOffset");
 
       allocasRemaining--;
+      // Insert canary after the variable
+      Value *canaryOffset = currentOffset;
+      Value *zero = ConstantInt::get(i64, 0);
+      SmallVector<Value *> canaryIndices = {zero, canaryOffset};
+      Value *canaryPtr = builder.CreateGEP(
+          consolidatedAlloca->getAllocatedType(), consolidatedAlloca,
+          canaryIndices, "canaryPtr");
+      builder.CreateStore(canaryConst, canaryPtr);
+
+      // Save the canary pointer for later verification
+      canaryPtrs.push_back(canaryPtr);
+
+      // Move currentOffset past the canary (1 byte)
+      currentOffset = builder.CreateAdd(currentOffset, ConstantInt::get(i64, 1),
+                                        "offsetAfterCanary");
+
     }
 
     // Insert final canary at the end
-    builder.SetInsertPoint(&BB.back());
-    Value *finalCanaryOffset = currentOffset;
-    Value *zero = ConstantInt::get(i64, 0);
-    SmallVector<Value *> finalCanaryIndices = {zero, finalCanaryOffset};
-    Value *finalCanaryPtr = builder.CreateGEP(
-        consolidatedAlloca->getAllocatedType(), consolidatedAlloca,
-        finalCanaryIndices, "finalCanaryPtr");
-    builder.CreateStore(canaryConst, finalCanaryPtr);
-    canaryPtrs.push_back(finalCanaryPtr);
+    // builder.SetInsertPoint(&BB.back());
+    // Value *finalCanaryOffset = currentOffset;
+    // Value *zero = ConstantInt::get(i64, 0);
+    // SmallVector<Value *> finalCanaryIndices = {zero, finalCanaryOffset};
+    // Value *finalCanaryPtr = builder.CreateGEP(
+    //     consolidatedAlloca->getAllocatedType(), consolidatedAlloca,
+    //     finalCanaryIndices, "finalCanaryPtr");
+    // builder.CreateStore(canaryConst, finalCanaryPtr);
+    // canaryPtrs.push_back(finalCanaryPtr);
 
     // Clean up old allocas
     for (AllocaInst *allocaInst : allocas) {
