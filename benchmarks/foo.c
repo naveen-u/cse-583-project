@@ -2,7 +2,7 @@
 
 int bar() {
   int a = 1;
-  char s[3];
+  char s[10];
   int b = 2;
 
   fprintf(stdout, "Between a & s: %ld\n", (long)&a - (long)&s);
