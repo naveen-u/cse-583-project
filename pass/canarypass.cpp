@@ -104,10 +104,6 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
   /* -------------------------------------------------------------------------- */
 
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &FAM) {
-    if (F.getName().str() == "main") {
-      return PreservedAnalyses::all();
-    }
-
     BasicBlock &BB = F.getEntryBlock();
     LLVMContext &ctx = F.getContext();
     Type *i1 = Type::getInt1Ty(ctx);
@@ -215,9 +211,9 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
       Value *canaryOffset = currentOffset;
       Value *zero = ConstantInt::get(i64, 0);
       SmallVector<Value *> canaryIndices = {zero, canaryOffset};
-      Value *canaryPtr = builder.CreateGEP(
-          consolidatedAlloca->getAllocatedType(), consolidatedAlloca,
-          canaryIndices, "canaryPtr");
+      Value *canaryPtr =
+          builder.CreateGEP(consolidatedAlloca->getAllocatedType(),
+                            consolidatedAlloca, canaryIndices, "canaryPtr");
       builder.CreateStore(canaryConst, canaryPtr);
 
       // Save the canary pointer for later verification
@@ -226,7 +222,6 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
       // Move currentOffset past the canary (1 byte)
       currentOffset = builder.CreateAdd(currentOffset, ConstantInt::get(i64, 1),
                                         "offsetAfterCanary");
-
     }
 
     // Insert final canary at the end
@@ -265,8 +260,7 @@ struct CanaryPass : public PassInfoMixin<CanaryPass> {
     // Process all return instructions
     for (ReturnInst *RI : returns) {
       // Get the return value before erasing RI
-      Value *retValue =
-          RI->getNumOperands() > 0 ? RI->getOperand(0) : nullptr;
+      Value *retValue = RI->getNumOperands() > 0 ? RI->getOperand(0) : nullptr;
 
       IRBuilder<> RetBuilder(RI);
 
