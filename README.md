@@ -19,28 +19,37 @@ An LLVM pass for thwarting and detecting Data Oriented Programming (DOP) attacks
 
 ### Building
 To build the pass and the required library, use the provided run script.
-```sh
-./run.sh
+```console
+$ ./run.sh
 ```
-This generates `CanaryPass.so` and `rand.o` in the `./build/pass` directory. The pass can then be applied using `clang` or `opt`:
-```sh
-# Using opt
-opt -load-pass-plugin="<path_to_CanaryPass.so>" -passes="CanaryPass" <source_file>
-# When using opt, ensure that `rand.o` is linked when creating the final binary.
+This generates `CanaryPass.so` and `rand.o` in the `./build/pass` directory. The pass can then be applied using `clang` or `opt`.
 
-# Using clang
-clang -fpass-plugin="<path_to_CanaryPass.so>" <path_to_rand.o> <source_file>
+### Applying the Pass
+#### Using `opt`
+To apply the pass using `opt`:
+```console
+$ opt -load-pass-plugin="<path_to_CanaryPass.so>" -passes="CanaryPass" <source_file>
+```
+When using opt, ensure that `rand.o` is linked when creating the final binary on x86 machines, and the OpenSSL Crypto lib is linked if building on arm machines.
+
+#### Using `clang`
+To apply the pass using `clang`, use one of the below based on system architecture:
+```console
+$ clang -Xclang -disable-O0-optnone -fpass-plugin="<path_to_CanaryPass.so>" <path_to_rand.o> <source_file> # for x86
+$ clang -Xclang -disable-O0-optnone -fpass-plugin="<path_to_CanaryPass.so>" -lcrypto <source_file> # for arm
 ```
 
 ### Testing
 To generate executables for the test cases in `./tests/`, use the run script:
-```sh
-# Generate executables for ./tests/foo.c
-./run.sh foo
+```console
+$ ./run.sh foo      # This generates executables for ./tests/foo.c
 ```
 Two executables are generated in `./build/executables`:
 - `foo.original.out`: Executable for the unmodified program
 - `foo.fs.out`: Executable with the pass applied
+
+## Demo
+Refer https://github.com/naveen-u/min-dop for a demonstration of Stackato.
 
 ## References
 This project was based on:
