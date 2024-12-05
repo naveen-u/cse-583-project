@@ -29,7 +29,7 @@ opt -load-pass-plugin="<path_to_CanaryPass.so>" -passes="CanaryPass" <source_fil
 # When using opt, ensure that `rand.o` is linked when creating the final binary.
 
 # Using clang
-clang -fpass-plugin="<path_to_CanaryPass.so>" rand.o <source_file>
+clang -fpass-plugin="<path_to_CanaryPass.so>" <path_to_rand.o> <source_file>
 ```
 
 ### Testing
